@@ -1,0 +1,16 @@
+apiVersion: v2
+name: otel-stack
+description: Full OpenTelemetry observability stack (Collector + Prometheus + Loki + Grafana)
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - opentelemetry
+  - observability
+  - prometheus
+  - loki
+  - grafana
+sources:
+  - https://github.com/open-telemetry/opentelemetry-collector
+maintainers:
+  - name: platform-team

@@ -1,0 +1,102 @@
+# OpenTelemetry Collector configuration
+# Receives OTLP (gRPC + HTTP), exports:
+#   Metrics → Prometheus (scrape endpoint)
+#   Logs    → Loki (via loki exporter)
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  pprof:
+    endpoint: 0.0.0.0:1777
+  zpages:
+    endpoint: 0.0.0.0:55679
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+  # Scrape collector's own internal metrics
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: otel-collector
+          scrape_interval: 10s
+          static_configs:
+            - targets: ["0.0.0.0:8888"]
+
+processors:
+  # Drop noisy attributes, add batch efficiency
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+
+  # Memory safeguard: drop data if memory pressure is high
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+
+  # Enrich all signals with a cluster label
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: "local"
+        action: upsert
+      - key: cluster
+        value: "otel-demo"
+        action: upsert
+
+  # Add timestamps to logs if missing
+  transform/logs:
+    log_statements:
+      - context: log
+        statements:
+          - set(time, Now()) where time_unix_nano == 0
+
+exporters:
+  # Expose metrics on :8889 for Prometheus to scrape
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: otel
+    resource_to_telemetry_conversion:
+      enabled: true
+    enable_open_metrics: true
+
+  # Ship logs to Loki
+  loki:
+    endpoint: "http://loki:3100/loki/api/v1/push"
+    default_labels_enabled:
+      exporter: true
+      job: true
+      instance: true
+      level: true
+
+  # Debug exporter — logs a summary of every received batch (useful for development)
+  debug:
+    verbosity: basic
+    sampling_initial: 5
+    sampling_thereafter: 200
+
+service:
+  extensions: [health_check, pprof, zpages]
+  pipelines:
+    metrics:
+      receivers:  [otlp, prometheus]
+      processors: [memory_limiter, resource, batch]
+      exporters:  [prometheus, debug]
+
+    logs:
+      receivers:  [otlp]
+      processors: [memory_limiter, resource, transform/logs, batch]
+      exporters:  [loki, debug]
+
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: detailed
+      address: 0.0.0.0:8888

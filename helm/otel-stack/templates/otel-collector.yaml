@@ -1,0 +1,165 @@
+{{- if .Values.otelCollector.enabled }}
+---
+# ConfigMap: OTel Collector config
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: {{ include "otel-stack.namespace" . }}
+  labels:
+    {{- include "otel-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+data:
+  config.yaml: |
+    extensions:
+      health_check:
+        endpoint: 0.0.0.0:{{ .Values.otelCollector.ports.healthCheck }}
+
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: 0.0.0.0:{{ .Values.otelCollector.ports.grpc }}
+          http:
+            endpoint: 0.0.0.0:{{ .Values.otelCollector.ports.http }}
+      prometheus:
+        config:
+          scrape_configs:
+            - job_name: otel-collector
+              scrape_interval: 10s
+              static_configs:
+                - targets: ["0.0.0.0:{{ .Values.otelCollector.ports.metricsInternal }}"]
+
+    processors:
+      batch:
+        timeout: {{ .Values.otelCollector.config.batchTimeout }}
+        send_batch_size: {{ .Values.otelCollector.config.batchSize }}
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: {{ .Values.otelCollector.config.memoryLimitMib }}
+        spike_limit_mib: {{ .Values.otelCollector.config.spikeLimitMib }}
+      resource:
+        attributes:
+          - key: deployment.environment
+            value: "{{ .Values.global.environment }}"
+            action: upsert
+          - key: cluster
+            value: "{{ .Values.global.clusterName }}"
+            action: upsert
+
+    exporters:
+      prometheus:
+        endpoint: "0.0.0.0:{{ .Values.otelCollector.ports.metricsExport }}"
+        namespace: otel
+        resource_to_telemetry_conversion:
+          enabled: true
+      loki:
+        endpoint: "http://loki:{{ .Values.loki.port }}/loki/api/v1/push"
+        default_labels_enabled:
+          exporter: true
+          job: true
+          level: true
+
+    service:
+      extensions: [health_check]
+      pipelines:
+        metrics:
+          receivers:  [otlp, prometheus]
+          processors: [memory_limiter, resource, batch]
+          exporters:  [prometheus]
+        logs:
+          receivers:  [otlp]
+          processors: [memory_limiter, resource, batch]
+          exporters:  [loki]
+      telemetry:
+        metrics:
+          address: 0.0.0.0:{{ .Values.otelCollector.ports.metricsInternal }}
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: {{ include "otel-stack.namespace" . }}
+  labels:
+    {{- include "otel-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  replicas: {{ .Values.otelCollector.replicas }}
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+        {{- include "otel-stack.labels" . | nindent 8 }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "{{ .Values.otelCollector.ports.metricsExport }}"
+    spec:
+      containers:
+        - name: otel-collector
+          image: "{{ .Values.otelCollector.image.repository }}:{{ .Values.otelCollector.image.tag }}"
+          imagePullPolicy: {{ .Values.otelCollector.image.pullPolicy }}
+          args: ["--config=/etc/otel/config.yaml"]
+          ports:
+            - containerPort: {{ .Values.otelCollector.ports.grpc }}
+              name: otlp-grpc
+            - containerPort: {{ .Values.otelCollector.ports.http }}
+              name: otlp-http
+            - containerPort: {{ .Values.otelCollector.ports.metricsInternal }}
+              name: metrics-int
+            - containerPort: {{ .Values.otelCollector.ports.metricsExport }}
+              name: metrics-exp
+            - containerPort: {{ .Values.otelCollector.ports.healthCheck }}
+              name: health
+          livenessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.otelCollector.ports.healthCheck }}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /
+              port: {{ .Values.otelCollector.ports.healthCheck }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.otelCollector.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/otel
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-config
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: {{ include "otel-stack.namespace" . }}
+  labels:
+    {{- include "otel-stack.labels" . | nindent 4 }}
+    app.kubernetes.io/component: otel-collector
+spec:
+  type: {{ .Values.otelCollector.serviceType }}
+  selector:
+    app: otel-collector
+  ports:
+    - name: otlp-grpc
+      port: {{ .Values.otelCollector.ports.grpc }}
+      targetPort: otlp-grpc
+    - name: otlp-http
+      port: {{ .Values.otelCollector.ports.http }}
+      targetPort: otlp-http
+    - name: metrics-exp
+      port: {{ .Values.otelCollector.ports.metricsExport }}
+      targetPort: metrics-exp
+    - name: health
+      port: {{ .Values.otelCollector.ports.healthCheck }}
+      targetPort: health
+{{- end }}
