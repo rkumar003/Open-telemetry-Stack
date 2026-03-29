@@ -21,7 +21,6 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -36,26 +35,22 @@ func getOtelEndpoint() string {
 	return ep
 }
 
-// initResource builds the OTel resource with service metadata.
 func initResource() (*resource.Resource, error) {
 	return resource.Merge(
 		resource.Default(),
-		resource.NewWithAttributes(
-			semconv.SchemaURL,
-			semconv.ServiceName(serviceName),
-			semconv.ServiceVersion("1.0.0"),
-			attribute.String("environment", os.Getenv("APP_ENV")),
+		resource.NewSchemaless(
+			attribute.String("service.name", serviceName),
+			attribute.String("service.version", "1.0.0"),
+			attribute.String("deployment.environment", os.Getenv("APP_ENV")),
 		),
 	)
 }
 
-// initMetrics sets up the OTLP gRPC metric exporter and MeterProvider.
 func initMetrics(ctx context.Context, res *resource.Resource, conn *grpc.ClientConn) (*sdkmetric.MeterProvider, error) {
 	exporter, err := otlpmetricgrpc.New(ctx, otlpmetricgrpc.WithGRPCConn(conn))
 	if err != nil {
 		return nil, fmt.Errorf("creating OTLP metric exporter: %w", err)
 	}
-
 	mp := sdkmetric.NewMeterProvider(
 		sdkmetric.WithResource(res),
 		sdkmetric.WithReader(
@@ -66,13 +61,11 @@ func initMetrics(ctx context.Context, res *resource.Resource, conn *grpc.ClientC
 	return mp, nil
 }
 
-// initLogs sets up the OTLP gRPC log exporter and LoggerProvider.
 func initLogs(ctx context.Context, res *resource.Resource, conn *grpc.ClientConn) (*sdklog.LoggerProvider, error) {
 	exporter, err := otlploggrpc.New(ctx, otlploggrpc.WithGRPCConn(conn))
 	if err != nil {
 		return nil, fmt.Errorf("creating OTLP log exporter: %w", err)
 	}
-
 	lp := sdklog.NewLoggerProvider(
 		sdklog.WithResource(res),
 		sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)),
@@ -81,15 +74,12 @@ func initLogs(ctx context.Context, res *resource.Resource, conn *grpc.ClientConn
 	return lp, nil
 }
 
-// appLogger wraps the OTel logger for structured logging.
 type appLogger struct {
 	logger otellog.Logger
 }
 
 func newAppLogger() *appLogger {
-	return &appLogger{
-		logger: global.GetLoggerProvider().Logger(serviceName),
-	}
+	return &appLogger{logger: global.GetLoggerProvider().Logger(serviceName)}
 }
 
 func (l *appLogger) Info(ctx context.Context, msg string, attrs ...otellog.KeyValue) {
@@ -112,7 +102,6 @@ func (l *appLogger) Error(ctx context.Context, msg string, err error, attrs ...o
 	log.Printf("[ERROR] %s: %v", msg, err)
 }
 
-// httpHandler simulates realistic traffic and emits metrics + logs.
 type httpHandler struct {
 	logger          *appLogger
 	requestCounter  metric.Int64Counter
@@ -129,7 +118,6 @@ func newHTTPHandler(meter metric.Meter, logger *appLogger) (*httpHandler, error)
 	if err != nil {
 		return nil, err
 	}
-
 	reqDuration, err := meter.Float64Histogram("http.server.request.duration",
 		metric.WithDescription("HTTP request duration in milliseconds"),
 		metric.WithUnit("ms"),
@@ -137,7 +125,6 @@ func newHTTPHandler(meter metric.Meter, logger *appLogger) (*httpHandler, error)
 	if err != nil {
 		return nil, err
 	}
-
 	activeReqs, err := meter.Int64UpDownCounter("http.server.active_requests",
 		metric.WithDescription("Number of in-flight HTTP requests"),
 		metric.WithUnit("{request}"),
@@ -145,7 +132,6 @@ func newHTTPHandler(meter metric.Meter, logger *appLogger) (*httpHandler, error)
 	if err != nil {
 		return nil, err
 	}
-
 	errCounter, err := meter.Int64Counter("http.server.errors.total",
 		metric.WithDescription("Total number of HTTP errors"),
 		metric.WithUnit("{error}"),
@@ -153,7 +139,6 @@ func newHTTPHandler(meter metric.Meter, logger *appLogger) (*httpHandler, error)
 	if err != nil {
 		return nil, err
 	}
-
 	return &httpHandler{
 		logger:          logger,
 		requestCounter:  reqCounter,
@@ -168,11 +153,9 @@ var routes = []string{"/api/video/stream", "/api/video/manifest", "/api/user/pro
 func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	start := time.Now()
-
-	// Simulate a random route for load generation
 	route := routes[rand.Intn(len(routes))]
 	statusCode := 200
-	isError := rand.Float64() < 0.05 // 5% error rate
+	isError := rand.Float64() < 0.05
 
 	attrs := []attribute.KeyValue{
 		attribute.String("http.method", r.Method),
@@ -182,17 +165,13 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.activeRequests.Add(ctx, 1, metric.WithAttributes(attrs...))
 	defer h.activeRequests.Add(ctx, -1, metric.WithAttributes(attrs...))
 
-	// Simulate processing latency (10–400ms)
 	latency := 10 + rand.Float64()*390
 	time.Sleep(time.Duration(latency) * time.Millisecond)
 
 	if isError {
 		statusCode = 500
-		h.errorCounter.Add(ctx, 1, metric.WithAttributes(
-			append(attrs, attribute.Int("http.status_code", statusCode))...,
-		))
-		h.logger.Error(ctx, "request failed",
-			fmt.Errorf("internal server error"),
+		h.errorCounter.Add(ctx, 1, metric.WithAttributes(append(attrs, attribute.Int("http.status_code", statusCode))...))
+		h.logger.Error(ctx, "request failed", fmt.Errorf("internal server error"),
 			otellog.String("http.route", route),
 			otellog.Int("http.status_code", statusCode),
 		)
@@ -212,7 +191,6 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"status":%d,"route":"%s","latency_ms":%.2f}`, statusCode, route, latency)
 }
 
-// loadGenerator simulates background traffic.
 func loadGenerator(ctx context.Context, addr string, logger *appLogger) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -225,7 +203,6 @@ func loadGenerator(ctx context.Context, addr string, logger *appLogger) {
 			go func() {
 				resp, err := client.Get("http://" + addr + "/")
 				if err != nil {
-					logger.Error(ctx, "load generator request failed", err)
 					return
 				}
 				resp.Body.Close()
@@ -234,17 +211,15 @@ func loadGenerator(ctx context.Context, addr string, logger *appLogger) {
 	}
 }
 
-// systemMetrics emits simulated system-level gauges.
 func systemMetrics(ctx context.Context, meter metric.Meter, logger *appLogger) {
 	cpuGauge, _ := meter.Float64ObservableGauge("system.cpu.utilization",
-		metric.WithDescription("Simulated CPU utilization (0–1)"),
+		metric.WithDescription("Simulated CPU utilization (0-1)"),
 		metric.WithUnit("1"),
 	)
 	memGauge, _ := meter.Float64ObservableGauge("system.memory.utilization",
-		metric.WithDescription("Simulated memory utilization (0–1)"),
+		metric.WithDescription("Simulated memory utilization (0-1)"),
 		metric.WithUnit("1"),
 	)
-
 	meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
 		cpu := 0.2 + rand.Float64()*0.6
 		mem := 0.3 + rand.Float64()*0.4
@@ -283,21 +258,13 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to init metrics: %v", err)
 	}
-	defer func() {
-		if err := mp.Shutdown(context.Background()); err != nil {
-			log.Printf("Error shutting down MeterProvider: %v", err)
-		}
-	}()
+	defer mp.Shutdown(context.Background())
 
 	lp, err := initLogs(ctx, res, conn)
 	if err != nil {
 		log.Fatalf("Failed to init logs: %v", err)
 	}
-	defer func() {
-		if err := lp.Shutdown(context.Background()); err != nil {
-			log.Printf("Error shutting down LoggerProvider: %v", err)
-		}
-	}()
+	defer lp.Shutdown(context.Background())
 
 	logger := newAppLogger()
 	meter := otel.Meter(serviceName)
@@ -310,10 +277,7 @@ func main() {
 	systemMetrics(ctx, meter, logger)
 
 	addr := "0.0.0.0:8080"
-	srv := &http.Server{
-		Addr:    addr,
-		Handler: handler,
-	}
+	srv := &http.Server{Addr: addr, Handler: handler}
 
 	go loadGenerator(ctx, "localhost:8080", logger)
 

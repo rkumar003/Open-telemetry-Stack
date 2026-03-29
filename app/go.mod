@@ -1,15 +1,15 @@
 module github.com/example/otel-app
 
-go 1.21
+go 1.22
 
 require (
-	go.opentelemetry.io/otel v1.24.0
-	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.24.0
-	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.6.0
-	go.opentelemetry.io/otel/metric v1.24.0
-	go.opentelemetry.io/otel/sdk v1.24.0
-	go.opentelemetry.io/otel/sdk/metric v1.24.0
-	go.opentelemetry.io/otel/sdk/log v0.6.0
-	go.opentelemetry.io/otel/log v0.6.0
-	google.golang.org/grpc v1.62.1
+go.opentelemetry.io/otel v1.33.0
+go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.33.0
+go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.11.0
+go.opentelemetry.io/otel/metric v1.33.0
+go.opentelemetry.io/otel/sdk v1.33.0
+go.opentelemetry.io/otel/sdk/metric v1.33.0
+go.opentelemetry.io/otel/sdk/log v0.11.0
+go.opentelemetry.io/otel/log v0.11.0
+google.golang.org/grpc v1.71.0
 )
